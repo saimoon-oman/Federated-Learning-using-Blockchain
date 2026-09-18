@@ -1,0 +1,14 @@
+{
+  "tx": [
+    {
+      "op": "setServer",
+      "seconds": 0.054,
+      "gas": 47722
+    },
+    {
+      "op": "setScore",
+      "seconds": 0.041,
+      "gas": 44516
+    }
+  ]
+}
