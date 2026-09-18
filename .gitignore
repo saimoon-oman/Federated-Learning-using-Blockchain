@@ -1,0 +1,24 @@
+# Secrets — never commit (EXECUTION_GUIDELINE.md Section 4)
+.kaggle/
+kaggle.json
+access_token
+.env
+*.pem
+*.key
+*id_rsa*
+*id_ed25519*
+
+# Data (too large for git)
+python/model/creditcard_2023.csv
+python/model/nbaiot/
+python/weights_store/
+python/results/
+*.csv
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Experiment logs with secrets
+ngrok*.log

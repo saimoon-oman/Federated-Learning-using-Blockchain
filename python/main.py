@@ -327,16 +327,16 @@ def train_threshold_times(client, committee, threshold):
 ttt = ''
 
 def update_server_model(model):
-    projectId = "2HWWSM26k2fOYJGFAiAxCsF2TRF"
-    projectSecret = "ab5fa9048e3166641c0a2726b6351230"
-    endpoint = "https://ipfs.infura.io:5001"
-    global ttt
+    # Local content-addressed storage (replaces defunct Infura IPFS, see 5.2).
+    # Returns a hex hash string — same type/shape as before, still written
+    # on-chain via setServer downstream.
+    from local_storage import save_weights
 
     weights = model.get_weights()
 
     server.model.set_weights(weights)
 
-    server_grads=list()
+    server_grads = list()
 
     server_grads.append(weights)
 
@@ -347,19 +347,9 @@ def update_server_model(model):
     server_file.write(server_content)
     server_file.close()
 
-    for i in range(len(weights)):
-        weights[i] = weights[i].tolist()
+    server_hash = save_weights(weights)
 
-    weights_as_string = json.dumps(weights)
-
-    file = {
-        'server_file': (None, weights_as_string)
-    }
-
-    server_response = requests.post(endpoint + '/api/v0/add', files=file, auth=(projectId, projectSecret))
-
-    server_hash = server_response.json()['Hash']
-
+    global ttt
     ttt = server_hash
     return server_hash
 
@@ -399,36 +389,14 @@ async def initialize(request: Request):
 from requests.exceptions import ChunkedEncodingError
 
 def copy_server(hash):
-    projectId = "2HWWSM26k2fOYJGFAiAxCsF2TRF"
-    projectSecret = "ab5fa9048e3166641c0a2726b6351230"
-    endpoint = "https://ipfs.infura.io:5001"
+    # Local content-addressed storage (replaces defunct Infura IPFS, see 5.2).
+    from local_storage import load_weights
     global ttt
 
     print("Before Hash: ", ttt)
     print("After Hash : ", hash)
-    server_weight = []
 
-    params = {
-        'arg': hash
-    }
-
-    def make_request(retries=5):
-        for _ in range(retries):
-            try:
-                response = requests.post(endpoint + '/api/v0/cat', params=params, auth=(projectId, projectSecret))
-                response.raise_for_status()
-                return response
-            except ChunkedEncodingError as e:
-                print("ChunkedEncodingError:", e)
-                print("Retrying request...")
-        raise Exception("Failed to make request after {} retries".format(retries))
-
-    response = make_request()
-    weights_as_string = response.text
-
-    weights = json.loads(weights_as_string)
-
-    retrieved_weights = [np.array(arr) for arr in weights]
+    retrieved_weights = load_weights(hash)
 
     server.model.set_weights(retrieved_weights)
 
