@@ -52,6 +52,13 @@ class Server:
                 Dense(128, activation='relu'),  # Fully connected layer with 128 units and ReLU activation
                 Dense(1, activation='sigmoid')  # Output layer with 10 units for 10 classes (digits 0-9) and softmax activation
             ])
+        elif dataset == 'nbaiot':
+            # N-BaIoT: 115 statistical traffic features, binary benign/attack
+            model = Sequential([
+                Flatten(input_shape=(115,)),
+                Dense(128, activation='relu'),
+                Dense(1, activation='sigmoid')
+            ])
         else:
             pass
         if method != "differential privacy":

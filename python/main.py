@@ -88,6 +88,17 @@ current_timestamp = 0
 dataset = ""
 method = ""
 
+# Adversarial-injection hooks (default OFF = exact original behavior).
+# run_experiment.py sets these for Phase D robustness runs.
+ADVERSARIAL_IDS = set()
+ATTACK = None  # None | "scaling"
+ATTACK_SCALE = 5.0
+
+
+def _maybe_apply_scaling_attack(client_model, client_id):
+    if ATTACK == "scaling" and client_id in ADVERSARIAL_IDS:
+        client_model.set_weights([w * ATTACK_SCALE for w in client_model.get_weights()])
+
 epochs = 5
 batch_size = 64
 
@@ -236,11 +247,74 @@ def credit_card_fraud_detection_dataset(no_of_client):
             clients_datalist_y[i][j] = np.concatenate((np.array(clients_datalist_y[i][j]), y_dummy), axis=0)
 
 
+def nbaiot_dataset(no_of_client, data_root='model/nbaiot', per_device=30000, seed=42, alpha=None):
+    """N-BaIoT split (guideline 2.1): natural device->client mapping when
+    no_of_client <= n_devices, else Dirichlet(alpha) split of pooled data.
+    Same per-timestamp dict structure + dummy-sample convention as the
+    minst/credit-card loaders above."""
+    global X_test, y_test
+    from nbaiot_loader import load_nbaiot
+    devices = load_nbaiot(data_root, per_device=per_device, seed=seed)
+    names = sorted(devices.keys())
+
+    shards_X, shards_y = [], []
+    if no_of_client <= len(names):
+        for n in names[:no_of_client]:
+            Xd, yd = devices[n]
+            shards_X.append(Xd)
+            shards_y.append(yd)
+        # leftover devices' data is unused in this run (natural-split pilot)
+    else:
+        if alpha is None:
+            alpha = 100
+        from dirichlet_partition import dirichlet_partition
+        Xp = np.concatenate([devices[n][0] for n in names], axis=0)
+        yp = np.concatenate([devices[n][1] for n in names], axis=0)
+        parts = dirichlet_partition(yp, no_of_client, alpha, seed=seed)
+        for p in parts:
+            shards_X.append(Xp[p] if len(p) else np.zeros((0, Xp.shape[1]), dtype=np.float32))
+            shards_y.append(yp[p] if len(p) else np.zeros((0,), dtype=np.int64))
+
+    # global test set: 15% stratified holdout from pooled train data
+    Xp_all = np.concatenate([s for s in shards_X if len(s)], axis=0)
+    yp_all = np.concatenate([s for s in shards_y if len(s)], axis=0)
+    X_tr, X_test, y_tr, y_test = train_test_split(
+        Xp_all, yp_all, test_size=0.15, random_state=seed, stratify=yp_all)
+    scaler = StandardScaler()
+    scaler.fit(X_tr)
+    X_test = scaler.transform(X_test)
+    shards_X = [scaler.transform(s) if len(s) else s for s in shards_X]
+
+    for i in range(no_of_client):
+        Xc, yc = shards_X[i], shards_y[i]
+        if len(Xc) == 0:
+            # empty Dirichlet shard: reuse one sample per class from pool so
+            # client code paths (fit/evaluate) never see zero-size input
+            for c in np.unique(yp_all):
+                j = np.where(yp_all == c)[0][0]
+                Xc = np.concatenate([Xc, scaler.transform(Xp_all[j:j + 1])], axis=0)
+                yc = np.concatenate([yc, yp_all[j:j + 1]], axis=0)
+        X_dummy, y_dummy = get_dummy(Xc, yc, 2)
+        order = np.arange(len(Xc))
+        random.Random(seed + i).shuffle(order)
+        Xc, yc = Xc[order], yc[order]
+        chunks_X = np.array_split(Xc, max_timestamp)
+        chunks_y = np.array_split(yc, max_timestamp)
+        iterative_list_X, iterative_list_y = {}, {}
+        for j in range(max_timestamp):
+            iterative_list_X[j] = np.concatenate([np.asarray(chunks_X[j]), X_dummy], axis=0)
+            iterative_list_y[j] = np.concatenate([np.asarray(chunks_y[j]), y_dummy], axis=0)
+        clients_datalist_X.append(iterative_list_X)
+        clients_datalist_y.append(iterative_list_y)
+
+
 def split_dataset_between_clients(no_of_client):
     if dataset == "minst":
         minst_dataset(no_of_client)
     elif dataset == 'credit card':
         credit_card_fraud_detection_dataset(no_of_client)
+    elif dataset == 'nbaiot':
+        nbaiot_dataset(no_of_client)
 
 
 def get_model():
@@ -256,6 +330,13 @@ def get_model():
             Flatten(input_shape=(29,)),  
             Dense(128, activation='relu'),  
             Dense(1, activation='sigmoid')  
+        ])
+    elif dataset == 'nbaiot':
+        # N-BaIoT: 115 statistical traffic features, binary benign/attack
+        model = Sequential([
+            Flatten(input_shape=(115,)),
+            Dense(128, activation='relu'),
+            Dense(1, activation='sigmoid')
         ])
     else:
         pass
@@ -426,6 +507,7 @@ def get_trust_model(res):
         if i in committee_memeber:
             continue
         client_list[i].model.fit(clients_datalist_X[i][current_timestamp], clients_datalist_y[i][current_timestamp], epochs=epochs, batch_size=batch_size, validation_split=0.2)
+        _maybe_apply_scaling_attack(client_list[i].model, i)
         model_list.append(client_list[i].model.get_weights())
 
     aggregated_model = model_aggregation(model_list)
@@ -514,6 +596,7 @@ def get_committee_consensus_model(res):
             trust_score[i] = max(int(res["trust_score"][i])-5000, 0)
             continue
         client_list[i].model.fit(clients_datalist_X[i][current_timestamp], clients_datalist_y[i][current_timestamp], epochs=epochs, batch_size=batch_size, validation_split=0.2)
+        _maybe_apply_scaling_attack(client_list[i].model, i)
         curr_score = 0
         for k in committee_memeber:
             sc = client_list[i].model.evaluate(x=clients_datalist_X[k][current_timestamp], y=clients_datalist_y[k][current_timestamp], verbose=0)
