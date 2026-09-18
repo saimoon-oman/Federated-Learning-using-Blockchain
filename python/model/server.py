@@ -8,7 +8,7 @@ from keras.models import Sequential
 from keras.layers import Dense, Flatten
 
 import tensorflow as tf
-tf.compat.v1.disable_v2_behavior()
+# NOTE: tf.compat.v1.disable_v2_behavior() removed (breaks fit on modern TF/Keras).
 import numpy as np
 tf.get_logger().setLevel('ERROR')
 try:

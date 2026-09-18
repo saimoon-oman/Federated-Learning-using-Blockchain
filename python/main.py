@@ -43,7 +43,9 @@ from keras.layers import Dense, Flatten
 from keras.utils import to_categorical
 
 import tensorflow as tf
-tf.compat.v1.disable_v2_behavior()
+# NOTE: tf.compat.v1.disable_v2_behavior() removed — it disables eager
+# execution, which breaks model.fit() on modern TF/Keras (Kaggle image).
+# Nothing in this pipeline needs v1 graph behavior (incl. the DP path).
 import numpy as np
 tf.get_logger().setLevel('ERROR')
 try:
