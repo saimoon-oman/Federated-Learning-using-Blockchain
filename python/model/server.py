@@ -11,8 +11,13 @@ import tensorflow as tf
 tf.compat.v1.disable_v2_behavior()
 import numpy as np
 tf.get_logger().setLevel('ERROR')
-import tensorflow_privacy
-from tensorflow_privacy.privacy.analysis import compute_dp_sgd_privacy
+try:
+    import tensorflow_privacy
+    from tensorflow_privacy.privacy.analysis import compute_dp_sgd_privacy
+    _TF_PRIVACY_AVAILABLE = True
+except ImportError:
+    tensorflow_privacy = None
+    _TF_PRIVACY_AVAILABLE = False
 
 
 epochs = 5
@@ -22,11 +27,17 @@ noise_multiplier = 0.3
 num_microbatches = 1
 learning_rate = 0.25
 
-optimizer = tensorflow_privacy.DPKerasSGDOptimizer(
-    l2_norm_clip=l2_norm_clip,
-    noise_multiplier=noise_multiplier,
-    num_microbatches=num_microbatches,
-    learning_rate=learning_rate)
+def get_dp_optimizer():
+    if not _TF_PRIVACY_AVAILABLE:
+        raise RuntimeError(
+            "tensorflow_privacy is not installed in this environment "
+            "(its latest release supports Python <3.12 only); "
+            "method='differential privacy' is unavailable here.")
+    return tensorflow_privacy.DPKerasSGDOptimizer(
+        l2_norm_clip=l2_norm_clip,
+        noise_multiplier=noise_multiplier,
+        num_microbatches=num_microbatches,
+        learning_rate=learning_rate)
 
 loss_categorical = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
 loss_binary = tf.keras.losses.BinaryCrossentropy(from_logits=True)
@@ -68,7 +79,7 @@ class Server:
                 model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
         else:
             if dataset == 'minst':
-                model.compile(optimizer=optimizer, loss=loss_categorical, metrics=['accuracy'])
+                model.compile(optimizer=get_dp_optimizer(), loss=loss_categorical, metrics=['accuracy'])
             else:
-                model.compile(optimizer=optimizer, loss=loss_binary, metrics=['accuracy'])
+                model.compile(optimizer=get_dp_optimizer(), loss=loss_binary, metrics=['accuracy'])
         return model
